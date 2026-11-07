@@ -1,5 +1,63 @@
-const C='junaira-v1',A=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
-self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll(A)).then(()=>self.skipWaiting()))});
-self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!=C).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});
-self.addEventListener('fetch',e=>{const r=e.request;if(r.method!='GET'||new URL(r.url).origin!=location.origin)return;
-e.respondWith(caches.match(r).then(h=>{const n=fetch(r).then(x=>{if(x.ok){const y=x.clone();caches.open(C).then(c=>c.put(r,y))}return x}).catch(()=>h);return h||n}))});
+const CACHE = 'junaira-v2';
+const CORE_FILES = [
+  './',
+  './index.html',
+  './manifest.webmanifest',
+  './icon-192.png',
+  './icon-512.png'
+];
+
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(CACHE)
+      .then(cache => cache.addAll(CORE_FILES))
+      .then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys()
+      .then(keys => Promise.all(
+        keys
+          .filter(key => key.startsWith('junaira-') && key !== CACHE)
+          .map(key => caches.delete(key))
+      ))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch', event => {
+  const request = event.request;
+  if (request.method !== 'GET') return;
+
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    const cached = await cache.match(request);
+
+    // Refresh the cache in the background, while returning cached content fast.
+    const refresh = fetch(request).then(response => {
+      if (response && response.ok) {
+        return cache.put(request, response.clone()).then(() => response);
+      }
+      return response;
+    }).catch(() => null);
+
+    event.waitUntil(refresh.then(() => undefined));
+
+    if (cached) return cached;
+
+    const fresh = await refresh;
+    if (fresh) return fresh;
+
+    if (request.mode === 'navigate') {
+      return (await cache.match('./index.html')) ||
+             (await cache.match('./')) ||
+             Response.error();
+    }
+    return Response.error();
+  })());
+});
